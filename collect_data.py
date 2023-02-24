@@ -138,3 +138,73 @@ def user_tweets():
             tweets.to_csv('~/git/nft_social_score/tweets.csv', index=False)
         it += 1
 
+def tweets_likes():
+    tweets = pd.read_csv('~/data_science/analysis/twitter/data/company_tweets.csv')
+    old_tweet_likes = pd.read_csv('~/data_science/analysis/twitter/data/tweet_likes.csv')
+    mn_date = old_tweet_likes.merge(tweets[['id','timestamp']].rename(columns={'id':'tweet_id'})).timestamp.max()
+    mn_date = datetime.strptime(mn_date, '%Y-%m-%d %H:%M:%S') - timedelta(days=3)
+    mn_date = str(mn_date)
+    tweets = tweets[(tweets.like_count > 2) & (tweets.timestamp >= mn_date) & (tweets.username != 'hellomoon_io')]
+    tweets.groupby('like_count').count()
+    tweets.groupby('username').count()
+
+    it = 0
+    tot = len(tweets)
+    tweet_likes = pd.DataFrame()
+    # for row in tweets.groupby('username').head(2).iterrows():
+    for row in tweets.tail(tot - it + 1).iterrows():
+        row = row[1]
+        print('#{}/{}: {}'.format(it, tot, len(tweet_likes)))
+        if row['username'] == 'hellomoon_io':
+            it += 1
+            continue
+        url = 'https://api.twitter.com/2/tweets/{}/liking_users'.format(row['id'])
+        params = {
+            'max_results':100
+        }
+        has_more = True
+        while has_more:
+            sleep((15*60) / 75)
+            try:
+                json_response = connect_to_endpoint(url, params)
+            except:
+                sleep(10)
+                json_response = connect_to_endpoint(url, params)
+            if not 'data' in json_response.keys():
+                print('Error {}'.format(row['username']))
+                print(json_response)
+                has_more = False
+                continue
+            cur = pd.DataFrame(json_response['data'])
+            cur['account'] = row['username']
+            cur['tweet_id'] = row['id']
+            if len(cur) and 'next_token' in json_response['meta'].keys():
+                params['pagination_token'] = json_response['meta']['next_token']
+            else:
+                has_more = False
+            tweet_likes = pd.concat([tweet_likes, cur[['id','username','account','tweet_id']]])
+            it += 1
+    new_tweet_likes = pd.concat([old_tweet_likes, tweet_likes]).drop_duplicates()
+    print('{} + {} -> {}'.format(len(old_tweet_likes), len(tweet_likes), len(new_tweet_likes)))
+    new_tweet_likes.to_csv('~/data_science/analysis/twitter/data/tweet_likes.csv', index=False)
+
+    tweet_likes = pd.read_csv('~/data_science/analysis/twitter/data/tweet_likes.csv')
+    tweets = pd.read_csv('~/data_science/analysis/twitter/data/company_tweets.csv')
+    tweets.sort_values('timestamp', ascending=0).head(20)
+    tweets.timestamp.max()
+    solana_core_audience = get_solana_core_audience(10)
+    solana_core_audience = solana_core_audience.id.unique()
+    df = tweet_likes[tweet_likes.id.isin(solana_core_audience)][['account','tweet_id']].merge(tweets[['id','timestamp']].rename(columns={'id':'tweet_id'}))
+    df.groupby('account').tweet_id.count()
+    def f(x):
+        # days_since_monday = (x.weekday() + 1) % 7
+        days_since_monday = (x.weekday()) % 7
+        monday_of_week = x - timedelta(days=days_since_monday)
+        return(monday_of_week)
+    df['adj_date'] = df.timestamp.apply(lambda x: (datetime.strptime(x, '%Y-%m-%d %H:%M:%S') + timedelta(hours=(15 - 5 + 48))).date() )
+    df['adj_week'] = df.adj_date.apply(lambda x: f(x))
+    # df = df.groupby(['account','adj_week']).timestamp.count().reset_index().rename(columns={'timestamp':'num_likes'})
+    df = df.groupby(['account','adj_week']).timestamp.count().reset_index().rename(columns={'timestamp':'num_likes'})
+    df = df[df.account != 'hellomoon_io']
+    df.tail(20)
+    df.to_csv('~/data_science/analysis/twitter/data/twitter_likes_data.csv', index=False)
